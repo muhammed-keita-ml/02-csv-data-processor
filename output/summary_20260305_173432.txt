@@ -1,0 +1,13 @@
+=== DATA PROCESSING SUMMARY ===
+Processed at: 20260305_173432
+Total rows:   10
+Total cols:   7
+
+Columns:
+  - name
+  - age
+  - salary
+  - department
+  - score
+  - processed_at
+  - row_total
