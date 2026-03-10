@@ -1,104 +1,101 @@
 import pandas as pd
 import numpy as np
 import os
+import mlflow
+import dagshub
 from datetime import datetime
 
-# ─────────────────────────────────────────
-# CSV Data Processor & Analysis Utility
-# Reads, cleans, transforms, and exports
-# ─────────────────────────────────────────
+# ── MLflow + DagsHub tracking setup ──────────────────
+dagshub.init(
+    repo_owner="muhammed-keita-ml", repo_name="02-csv-data-processor", mlflow=True
+)
 
-from typing import Final
-
-INPUT_FILE: Final = "sample_data.csv"
-OUTPUT_DIR: Final = "output"
+INPUT_FILE = "sample_data.csv"
+OUTPUT_DIR = "output"
 
 
 def load_data(filepath):
     """Load CSV file into a DataFrame"""
-    print(f"[LOAD] Reading {filepath}...")
     df = pd.read_csv(filepath)
-    print(f"[LOAD] {len(df)} rows, {len(df.columns)} columns loaded.")
+    print(f"[LOAD]    Loaded {len(df)} rows from {filepath}")
     return df
 
 
 def explore_data(df):
-    """Print basic info about the dataset"""
-    print("\n[INFO] Dataset Overview")
-    print("-" * 40)
-    print(df.info())
-    print("\n[INFO] First 5 rows:")
-    print(df.head())
-    print("\n[INFO] Missing values per column:")
-    print(df.isnull().sum())
-    print("\n[INFO] Basic statistics:")
-    print(df.describe())
+    """Print dataset overview"""
+    print(f"[EXPLORE] Shape: {df.shape}")
+    print(f"[EXPLORE] Columns: {list(df.columns)}")
+    print(f"[EXPLORE] Missing values:\n{df.isnull().sum()}")
 
 
 def clean_data(df):
-    """Clean the dataset: remove duplicates, fill nulls"""
-    original_len = len(df)
-
-    # Remove duplicate rows
+    """Remove duplicates and fill missing values"""
+    original_rows = len(df)
     df = df.drop_duplicates()
-    print(f"[CLEAN] Removed {original_len - len(df)} duplicate rows.")
+    removed = original_rows - len(df)
+    print(f"[CLEAN]   Removed {removed} duplicate rows")
 
-    # Fill missing numeric values with column mean
-    num_cols = df.select_dtypes(include=[np.number]).columns
-    df[num_cols] = df[num_cols].fillna(df[num_cols].mean())
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].mean())
 
-    # Fill missing text values with 'Unknown'
-    str_cols = df.select_dtypes(include=["object"]).columns
-    df[str_cols] = df[str_cols].fillna("Unknown")
+    text_cols = df.select_dtypes(include=["object"]).columns
+    df[text_cols] = df[text_cols].fillna("Unknown")
 
-    print(f"[CLEAN] Remaining rows: {len(df)}")
-    print(f"[CLEAN] Missing values after cleaning: {df.isnull().sum().sum()}")
+    remaining = int(df.isnull().sum().sum())
+    print(f"[CLEAN]   Missing values remaining: {remaining}")
     return df
 
 
 def transform_data(df):
-    """Add useful derived columns"""
-    # Add a processed timestamp column
+    """Add derived columns"""
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df["row_total"] = df[numeric_cols].sum(axis=1)
     df["processed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # If there are numeric columns, add a row sum column
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    if num_cols:
-        df["row_total"] = df[num_cols].sum(axis=1)
-        print(f"[TRANSFORM] Added row_total from columns: {num_cols}")
-
-    print("[TRANSFORM] Transformation complete.")
+    print(f"[TRANSFORM] Added row_total and processed_at columns")
     return df
 
 
-def export_data(df, output_dir):
-    """Export cleaned data to CSV and summary to text"""
-    os.makedirs(output_dir, exist_ok=True)
-
+def export_data(df):
+    """Export cleaned data to output folder"""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(OUTPUT_DIR, f"cleaned_data_{timestamp}.csv")
+    df.to_csv(output_path, index=False)
+    print(f"[EXPORT]  Saved to {output_path}")
 
-    # Export cleaned CSV
-    csv_path = os.path.join(output_dir, f"cleaned_{timestamp}.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"[EXPORT] Cleaned CSV saved: {csv_path}")
-
-    # Export summary report
-    summary_path = os.path.join(output_dir, f"summary_{timestamp}.txt")
+    summary_path = os.path.join(OUTPUT_DIR, f"summary_{timestamp}.txt")
     with open(summary_path, "w") as f:
-        f.write("=== DATA PROCESSING SUMMARY ===\n")
+        f.write(f"Rows: {len(df)}\n")
+        f.write(f"Columns: {len(df.columns)}\n")
         f.write(f"Processed at: {timestamp}\n")
-        f.write(f"Total rows:   {len(df)}\n")
-        f.write(f"Total cols:   {len(df.columns)}\n\n")
-        f.write("Columns:\n")
-        for col in df.columns:
-            f.write(f"  - {col}\n")
-    print(f"[EXPORT] Summary saved: {summary_path}")
+    print(f"[EXPORT]  Summary saved to {summary_path}")
 
 
 if __name__ == "__main__":
-    df = load_data(INPUT_FILE)
-    explore_data(df)
-    df = clean_data(df)
-    df = transform_data(df)
-    export_data(df, OUTPUT_DIR)
-    print("\n[DONE] Processing complete!")
+    with mlflow.start_run():
+
+        # Log input parameters
+        mlflow.log_param("input_file", INPUT_FILE)
+
+        # Load
+        df = load_data(INPUT_FILE)
+        mlflow.log_metric("original_rows", len(df))
+        mlflow.log_metric("original_columns", len(df.columns))
+
+        # Explore
+        explore_data(df)
+
+        # Clean
+        df = clean_data(df)
+        mlflow.log_metric("rows_after_cleaning", len(df))
+        mlflow.log_metric("missing_values_remaining", int(df.isnull().sum().sum()))
+
+        # Transform
+        df = transform_data(df)
+
+        # Export
+        export_data(df)
+        mlflow.log_metric("final_rows", len(df))
+        mlflow.log_metric("final_columns", len(df.columns))
+
+        print("[MLFLOW] Run tracked successfully on DagsHub.")
